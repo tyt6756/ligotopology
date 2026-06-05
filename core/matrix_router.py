@@ -3,7 +3,6 @@ import time
 import logging
 from typing import Dict, Any, List, Optional, Callable
 
-# 重构：定义自定义结构化日志输出格式
 def get_structured_logger(name: str):
     logger = logging.getLogger(name)
     formatter = logging.Formatter(
@@ -72,6 +71,8 @@ class MatrixRouter:
         logger.info(f"Dimension Worker-{dimension_id} stopped.")
 
     async def _process_packet(self, packet: DimensionPacket):
+        # 微调：通过 yield 让出 CPU 控制权，优化极端并发下的异步锁资源竞争
+        await asyncio.sleep(0)
         async with self._lock:
             key = packet.key
             dim_id = packet.dimension_id

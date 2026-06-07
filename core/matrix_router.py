@@ -18,9 +18,6 @@ def get_structured_logger(name: str):
 logger = get_structured_logger("MatrixRouter")
 
 class DimensionPacket:
-    """
-    维度数据包，用于承载单通道输入的异步多维数据。
-    """
     def __init__(self, dimension_id: int, key: str, payload: Any, timestamp: float = None):
         self.dimension_id = dimension_id
         self.key = key
@@ -32,9 +29,6 @@ class DimensionPacket:
 
 
 class MatrixRouter:
-    """
-    LigoTopology 多通道异步数据路由与对齐引擎。
-    """
     def __init__(self, num_dimensions: int = 10, alignment_timeout: float = 5.0):
         self.num_dimensions = num_dimensions
         self.alignment_timeout = alignment_timeout
@@ -45,6 +39,10 @@ class MatrixRouter:
         self.is_running = False
         self.workers: List[asyncio.Task] = []
         self._lock = asyncio.Lock()
+        
+        # 指标监控参数
+        self.total_ingested = 0
+        self.total_evicted = 0
 
     async def push_data(self, dimension_id: int, key: str, payload: Any):
         if not (0 <= dimension_id < self.num_dimensions):
@@ -52,6 +50,7 @@ class MatrixRouter:
         
         packet = DimensionPacket(dimension_id=dimension_id, key=key, payload=payload)
         await self.queues[dimension_id].put(packet)
+        self.total_ingested += 1
         logger.debug(f"Pushed packet to channel {dimension_id} with key {key}")
 
     async def _dimension_worker(self, dimension_id: int):
@@ -71,8 +70,11 @@ class MatrixRouter:
         logger.info(f"Dimension Worker-{dimension_id} stopped.")
 
     async def _process_packet(self, packet: DimensionPacket):
-        # 微调：通过 yield 让出 CPU 控制权，优化极端并发下的异步锁资源竞争
-        await asyncio.sleep(0)
+        # 动态自适应让出延迟：根据当前通道累积的数据包总量进行微调，缓解锁竞争
+        pending_load = sum(q.qsize() for q in self.queues)
+        sleep_time = min(0.001 * pending_load, 0.05)  # 动态延迟，最高 50ms
+        await asyncio.sleep(sleep_time)
+        
         async with self._lock:
             key = packet.key
             dim_id = packet.dimension_id
@@ -103,6 +105,7 @@ class MatrixRouter:
                     if key in self.timeout_tasks:
                         del self.timeout_tasks[key]
                     
+                    self.total_evicted += len(partial_frame)
                     logger.warning(
                         f"Alignment timeout for key {key}. "
                         f"Received dimensions: {list(partial_frame.keys())}/{self.num_dimensions}. "
@@ -111,6 +114,14 @@ class MatrixRouter:
                     await self.output_queue.put((key, partial_frame))
         except asyncio.CancelledError:
             pass
+
+    def get_eviction_ratio(self) -> float:
+        """
+        获取由于超时而被驱逐的丢包率指标
+        """
+        if self.total_ingested == 0:
+            return 0.0
+        return round(self.total_evicted / self.total_ingested, 4)
 
     async def start(self):
         if self.is_running:

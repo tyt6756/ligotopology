@@ -1,29 +1,49 @@
 import asyncio
-import unittest
+import pytest
 from core.matrix_router import MatrixRouter
 
-class TestMatrixRouterEviction(unittest.IsolatedAsyncioTestCase):
-    async def test_eviction_on_partial_data(self):
-        # 初始化 MatrixRouter，并将超时时间设置为 0.5s，加速测试
-        router = MatrixRouter(num_dimensions=10, alignment_timeout=0.5)
-        await router.start()
+@pytest.mark.asyncio
+async def test_eviction_on_partial_data():
+    """
+    验证当部分维度缺失时，MatrixRouter 是否能在超时设定后正确发出部分对齐的数据帧。
+    """
+    router = MatrixRouter(num_dimensions=10, alignment_timeout=0.5)
+    await router.start()
+    
+    key = "test_eviction_key"
+    # 仅推送前 8 个维度的数据，留空 dim 8 和 dim 9
+    for i in range(8):
+        await router.push_data(dimension_id=i, key=key, payload=f"data_{i}")
+        
+    await asyncio.sleep(0.7)
+    
+    out_key, frame = await router.get_aligned_frame()
+    assert out_key == key
+    assert len(frame) == 8
+    assert 8 not in frame
+    assert 9 not in frame
+    
+    await router.stop()
 
-        # 仅注入 8 个维度的数据，留下两个维度空缺
-        key = "test_eviction_key"
-        for i in range(8):
-            await router.push_data(dimension_id=i, key=key, payload=f"data_{i}")
 
-        # 等待超时触发
-        await asyncio.sleep(0.7)
-
-        # 验证是否从输出队列获得了部分对齐的帧
-        out_key, frame = await router.get_aligned_frame()
-        self.assertEqual(out_key, key)
-        self.assertEqual(len(frame), 8)
-        self.assertNotIn(8, frame)
-        self.assertNotIn(9, frame)
-
-        await router.stop()
-
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.asyncio
+async def test_extreme_lock_concurrency():
+    """
+    边界竞争测试：在相同 Key 下进行极高频的并发写入，验证 MatrixRouter 异步锁的死锁预防和资源分配。
+    """
+    router = MatrixRouter(num_dimensions=10, alignment_timeout=1.0)
+    await router.start()
+    
+    key = "concurrency_race_key"
+    # 异步并发压入 10 个维度的数据包
+    tasks = [
+        router.push_data(dimension_id=i, key=key, payload=f"race_payload_{i}")
+        for i in range(10)
+    ]
+    await asyncio.gather(*tasks)
+    
+    out_key, frame = await router.get_aligned_frame()
+    assert out_key == key
+    assert len(frame) == 10
+    
+    await router.stop()

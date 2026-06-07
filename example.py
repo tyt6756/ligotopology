@@ -12,6 +12,7 @@ logging.basicConfig(
 
 async def main():
     # 1. 初始化 MatrixRouter（支持 10 个维度，对齐超时时间设为 3 秒）与 TopologyConnector
+    # 拓扑连接器配置为空，将自动平滑 Fallback 至高性能 InMemory 模拟图模式
     router = MatrixRouter(num_dimensions=10, alignment_timeout=3.0)
     connector = TopologyConnector()
 
@@ -25,10 +26,17 @@ async def main():
         channels = range(10) if complete else range(9)
         tasks = []
         for i in channels:
+            # 丰富 Payload 文本，以触发 ManifoldSemanticEngine 的真实余弦相似度检索
+            status_desc = "normal status"
+            if i == 3:
+                status_desc = "critical CPU bottleneck and high latency"
+            elif i == 7:
+                status_desc = "network performance degradation and bottleneck"
+
             payload = {
                 "channel_index": i,
                 "signal_strength": round(i * 1.5, 2),
-                "status": "normal"
+                "payload": f"Channel {i} warning report: {status_desc}"
             }
             # 异步将数据推入对应的维度通道
             tasks.append(router.push_data(dimension_id=i, key=key, payload=payload))
@@ -49,14 +57,14 @@ async def main():
         key, frame = await router.get_aligned_frame()
         print(f"\n[对齐队列监听到帧] Key: {key}, 维度数量: {len(frame)}/10")
         
-        # 将对齐的帧数据写入模拟的 Neo4j 拓扑结构中
+        # 将对齐的帧数据写入拓扑结构中
         await connector.ingest_aligned_frame(key, frame)
 
     # 4. 执行多维拓扑网络子图流形检索
-    print("\n>>> [检索测试] 执行拓扑网络子图流形检索")
+    print("\n>>> [检索测试] 执行真实多维拓扑网络子图流形检索...")
     query_result = await connector.retrieve_topology_manifold(
         start_node_id="frame_transaction_1001",
-        query="检测当前拓扑结构中是否存在多通道并发瓶颈或性能滑坡特征。",
+        query="Analyze the CPU bottleneck and performance latency characteristics.",
         depth=1
     )
     

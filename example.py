@@ -4,29 +4,29 @@ import json
 from core.matrix_router import MatrixRouter
 from engine.topology_connector import TopologyConnector
 
-# 配置日志输出格式，用于观测数据管道对齐过程
+# Set up logging format to observe pipeline alignment behavior
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 
 async def main():
-    # 1. 初始化 MatrixRouter（支持 10 个维度，对齐超时时间设为 3 秒）与 TopologyConnector
-    # 拓扑连接器配置为空，将自动平滑 Fallback 至高性能 InMemory 模拟图模式
+    # 1. Initialize the Router and Connector
+    # TopologyConnector auto-falls back to high-performance InMemory mode if configurations are missing
     router = MatrixRouter(num_dimensions=10, alignment_timeout=3.0)
     connector = TopologyConnector()
 
-    # 启动多维度并发路由引擎
+    # Start the matrix routing workers
     await router.start()
 
-    # 模拟多通道并行推送数据的辅助函数
+    # Helper function to simulate concurrent ingestion for a specific key
     async def simulate_ingestion(key: str, complete: bool = True):
-        # 如果 complete 为 True，则推送全部 10 个维度；
-        # 如果为 False，则只推送前 9 个维度（dim 0-8），模拟第 10 个维度缺失以触发超时驱逐
+        # If 'complete' is True, we push to all 10 channels. 
+        # Otherwise, we omit channel 9 to trigger timeout eviction.
         channels = range(10) if complete else range(9)
         tasks = []
         for i in channels:
-            # 丰富 Payload 文本，以触发 ManifoldSemanticEngine 的真实余弦相似度检索
+            # Inject keywords like 'bottleneck', 'cpu', 'latency' to trigger semantic match
             status_desc = "normal status"
             if i == 3:
                 status_desc = "critical CPU bottleneck and high latency"
@@ -38,41 +38,41 @@ async def main():
                 "signal_strength": round(i * 1.5, 2),
                 "payload": f"Channel {i} warning report: {status_desc}"
             }
-            # 异步将数据推入对应的维度通道
+            # Push data into corresponding dimension queues asynchronously
             tasks.append(router.push_data(dimension_id=i, key=key, payload=payload))
         await asyncio.gather(*tasks)
 
-    # 2. 模拟两组不同场景的数据写入
-    # 场景 A: 完整的 10 维数据对齐 (key: 'transaction_1001')
-    print("\n>>> [场景 A] 注入完整 10 维数据帧 (Key: 'transaction_1001')")
+    # 2. Spawn concurrent data feeds
+    # Scenario A: Complete 10-dimensional alignment (key: 'transaction_1001')
+    print("\n>>> [Scenario A] Injecting complete 10-dimensional data frame (Key: 'transaction_1001')")
     await simulate_ingestion(key="transaction_1001", complete=True)
 
-    # 场景 B: 缺失单维度的数据，触发超时驱逐 (key: 'transaction_1002')
-    print("\n>>> [场景 B] 注入不完整数据帧以触发超时驱逐 (Key: 'transaction_1002')")
+    # Scenario B: Incomplete data frame triggering Eviction (key: 'transaction_1002')
+    print("\n>>> [Scenario B] Injecting incomplete data frame to trigger timeout eviction (Key: 'transaction_1002')")
     await simulate_ingestion(key="transaction_1002", complete=False)
 
-    # 3. 异步监听对齐结果并同步至拓扑连接器
-    # 期望处理 2 个帧：一个完美对齐帧，一个超时部分对齐帧
+    # 3. Pull aligned frames from the Matrix Router output queue and ingest into Topology Connector
+    # We will process 2 frames (one fully aligned, one timeout partial)
     for i in range(2):
         key, frame = await router.get_aligned_frame()
-        print(f"\n[对齐队列监听到帧] Key: {key}, 维度数量: {len(frame)}/10")
+        print(f"\n[Queue Monitor] Aligned Frame Detected -> Key: {key}, Dimensions: {len(frame)}/10")
         
-        # 将对齐的帧数据写入拓扑结构中
+        # Ingest the frame into the Mock Neo4j Subgraph
         await connector.ingest_aligned_frame(key, frame)
 
-    # 4. 执行多维拓扑网络子图流形检索
-    print("\n>>> [检索测试] 执行真实多维拓扑网络子图流形检索...")
+    # 4. Perform a Topological Manifold Retrieval query
+    print("\n>>> [Query Test] Executing multi-dimensional topological graph manifold retrieval...")
     query_result = await connector.retrieve_topology_manifold(
         start_node_id="frame_transaction_1001",
         query="Analyze the CPU bottleneck and performance latency characteristics.",
         depth=1
     )
     
-    # 美化打印最终的流形检索结果
-    print("\n[流形检索融合输出 (Topology Manifold Output)]:")
+    # Pretty print the final manifold retrieval results
+    print("\n[Manifold Query Output Result]:")
     print(json.dumps(query_result, indent=2, ensure_ascii=False))
 
-    # 停止路由引擎工作协程
+    # Stop the Router Engine workers
     await router.stop()
 
 if __name__ == "__main__":
